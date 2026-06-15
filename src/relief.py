@@ -28,7 +28,7 @@ from PIL import Image
 
 # src/ をパッケージとして扱わず単体実行できるようにする。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import stl_writer
+import iges_writer
 import gcode_writer
 import preview as preview_mod
 
@@ -48,9 +48,14 @@ class Params:
     SPINDLE_RPM: float = 18000
     SAFE_Z: float = 5.0         # mm
 
-    # STL解像度（実証済み: 300x200程度に抑える）
-    STL_COLS: int = 300
-    STL_ROWS: int = 200
+    # 曲面解像度（制御点数）。名称は後方互換のため STL_ 接頭辞のまま。
+    # 500列が品質と読み込み時間の最適点（実証済み）。400より明確に良く、
+    # 600では差がほぼ分からなくなる（＝500で頭打ち）。
+    STL_COLS: int = 500
+    STL_ROWS: int = 333
+    # IGES曲面の1パッチあたり片側方向の最大制御点数。グリッドが大きい
+    # 場合はタイル分割され、CADでの読み込みが速くなる。
+    IGES_PATCH_PTS: int = 64
 
     def as_dict(self):
         return asdict(self)
@@ -112,7 +117,8 @@ def process(image_path, out_dir, params, timestamp=False, fit_aspect=True):
 
     if fit_aspect:
         params.WORK_Y = round(adjust_work_y_to_aspect(params, image_path), 3)
-        # STL行数もアスペクトに合わせ更新（列数基準）。
+        # IGES曲面の行数もアスペクトに合わせ更新（列数基準）。STL_COLS/
+        # STL_ROWS は曲面の制御点解像度として流用している。
         params.STL_ROWS = max(2, int(round(params.STL_COLS * params.WORK_Y / params.WORK_X)))
 
     stem = image_path.stem
@@ -121,21 +127,23 @@ def process(image_path, out_dir, params, timestamp=False, fit_aspect=True):
         from datetime import datetime
         suffix = "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    stl_path = out_dir / f"{stem}_relief{suffix}.stl"
+    iges_path = out_dir / f"{stem}_relief{suffix}.igs"
     nc_path = out_dir / f"{stem}_relief{suffix}.nc"
     png_path = out_dir / f"{stem}_relief{suffix}.png"
 
-    for pth in (stl_path, nc_path, png_path):
+    for pth in (iges_path, nc_path, png_path):
         if pth.exists() and not timestamp:
             print(f"[警告] 上書きします: {pth}")
 
-    # --- STL用の深さマップ（解像度を抑える） ---
-    print(f"[STL] 深さマップ生成 {params.STL_COLS}x{params.STL_ROWS} ...")
-    stl_depth = image_to_depth_map(image_path, params, params.STL_ROWS, params.STL_COLS)
-    n_faces = stl_writer.write_stl(
-        stl_depth, params.WORK_X, params.WORK_Y, params.WORK_Z, stl_path
+    # --- IGES用の深さマップ ---
+    print(f"[IGES] 深さマップ生成 {params.STL_COLS}x{params.STL_ROWS} ...")
+    iges_depth = image_to_depth_map(image_path, params, params.STL_ROWS, params.STL_COLS)
+    n_patches, n_lines_iges = iges_writer.write_iges(
+        iges_depth, params.WORK_X, params.WORK_Y, params.WORK_Z, iges_path,
+        patch_pts=params.IGES_PATCH_PTS,
     )
-    print(f"[STL] {stl_path} ({n_faces} faces)")
+    print(f"[IGES] {iges_path} (B-spline曲面 {n_patches}パッチ, "
+          f"{n_lines_iges} パラメータ行)")
 
     # --- NC用の深さマップ（高解像度） ---
     nc_cols = max(2, int(round(params.WORK_X / params.SAMPLE_PITCH_X)) + 1)
@@ -150,10 +158,10 @@ def process(image_path, out_dir, params, timestamp=False, fit_aspect=True):
 
     # --- プレビューPNG ---
     print("[PNG] 陰影プレビュー生成 ...")
-    preview_mod.write_preview(stl_depth, params.WORK_Z, png_path)
+    preview_mod.write_preview(iges_depth, params.WORK_Z, png_path)
     print(f"[PNG] {png_path}")
 
-    return stl_path, nc_path, png_path
+    return iges_path, nc_path, png_path
 
 
 def build_arg_parser():

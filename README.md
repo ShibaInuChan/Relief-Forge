@@ -1,7 +1,10 @@
 # photo-relief-cam
 
-写真（任意のグレースケール変換可能な画像）から、切削試作用の **STL** と
+写真（任意のグレースケール変換可能な画像）から、切削試作用の **IGES** と
 **NC（Gコード）**、および陰影プレビュー **PNG** を生成する汎用 CLI ツールです。
+
+IGES は彫り込み面（上面）を 1 枚の B-spline 曲面（IGES Entity 128）として
+書き出すため、CAD/CAM で解析的な曲面として読み込めます。
 
 ## 方式（グレースケール・ハイトマップ方式）
 
@@ -19,7 +22,8 @@
 pip install -r requirements.txt
 ```
 
-依存: numpy, pillow, numpy-stl, matplotlib（Python 3）。
+依存: numpy, pillow, matplotlib（Python 3）。IGES 出力は追加ライブラリ不要で
+ASCII を直接生成します。
 
 ## 基本コマンド
 
@@ -27,7 +31,7 @@ pip install -r requirements.txt
 python src/relief.py samples/images/cherry.jpg --out output/
 ```
 
-- STL: `output/{stem}_relief.stl`
+- IGES: `output/{stem}_relief.igs`
 - NC : `output/{stem}_relief.nc`
 - PNG: `output/{stem}_relief.png`
 
@@ -41,7 +45,7 @@ python src/relief.py samples/images/cherry.jpg --out output/
 |------------|--------|------|
 | WORK_X | 150.0 | mm 板の長さ |
 | WORK_Y | 100.0 | mm 板の幅（画像アスペクトに合わせ調整可） |
-| WORK_Z | 20.0 | mm 板の厚み（STL用） |
+| WORK_Z | 20.0 | mm 板の厚み（曲面の基準高さ） |
 | MAX_DEPTH | 0.5 | mm 最大切削深さ（暗部） |
 | MIN_DEPTH | 0.0 | mm 最小切削深さ（明部） |
 | BALL_DIA | 1.0 | mm ボールエンドミル径 |
@@ -51,22 +55,26 @@ python src/relief.py samples/images/cherry.jpg --out output/
 | FEED_PLUNGE | 400 | mm/min 突込み送り |
 | SPINDLE_RPM | 18000 | 主軸回転数 |
 | SAFE_Z | 5.0 | mm 安全高さ |
-| STL_COLS | 300 | STL列数（解像度） |
-| STL_ROWS | 200 | STL行数（アスペクトで自動調整） |
+| STL_COLS | 500 | 曲面の制御点 列数（解像度。名称は後方互換のため STL_ 接頭辞のまま） |
+| STL_ROWS | 333 | 曲面の制御点 行数（アスペクトで自動調整） |
+| IGES_PATCH_PTS | 64 | IGES曲面の1パッチあたり片側最大制御点数（タイル分割の細かさ） |
 
 ## 出力規模の目安と注意
 
-- **STL**: 解像度は 300×200 程度に抑えています（約 24 万面、約 12MB）。
-  これ以上細かいと Fusion 360 で開けない／重くなります。形状確認・3Dプリント用と
-  割り切ってください（BRep ソリッド変換前提にしないこと）。
+- **IGES**: 既定の制御点解像度は 500×333 程度。上面の格子点を制御点とする線形
+  B-spline 曲面（格子点を厳密に通る区分双線形面）を、CADで軽快に読めるよう
+  複数パッチ（タイル）に分割して出力します。隣接パッチは境界の制御点を共有する
+  ため隙間なく連続します。500列が品質と読み込み時間の最適点で、600以上は差が
+  ほぼ分かりません。重い場合は `--iges_patch_pts` を下げると分割が細かくなり
+  読み込みが速くなります。
 - **NC**: 17 万行・数 MB 規模になります。生成時に標準出力で警告します。
   将来的な点列間引き（直線近似での圧縮）は `gcode_writer.compress_line` に
   関数を分離してあります（現状は未実装）。
 
 ## リポジトリ肥大化対策
 
-生成物（STL・NC・PNG）は大きいためコミットしません。`output/` と
-`*.stl` / `*.nc` / `*.gcode` は `.gitignore` で除外しています。サンプル画像
+生成物（IGES・NC・PNG）は大きいためコミットしません。`output/` と
+`*.igs` / `*.iges` / `*.stl` / `*.nc` / `*.gcode` は `.gitignore` で除外しています。サンプル画像
 （小さい jpg）とコードだけがあれば誰でも同じ出力を再現できます。
 
 ## ⚠️ 重要な免責
