@@ -48,9 +48,12 @@ class Params:
     SPINDLE_RPM: float = 18000
     SAFE_Z: float = 5.0         # mm
 
-    # STL解像度（実証済み: 300x200程度に抑える）
+    # 曲面解像度（制御点数）。名称は後方互換のため STL_ 接頭辞のまま。
     STL_COLS: int = 300
     STL_ROWS: int = 200
+    # IGES曲面の1パッチあたり片側方向の最大制御点数。グリッドが大きい
+    # 場合はタイル分割され、CADでの読み込みが速くなる。
+    IGES_PATCH_PTS: int = 64
 
     def as_dict(self):
         return asdict(self)
@@ -130,13 +133,15 @@ def process(image_path, out_dir, params, timestamp=False, fit_aspect=True):
         if pth.exists() and not timestamp:
             print(f"[警告] 上書きします: {pth}")
 
-    # --- IGES用の深さマップ（解像度を抑える） ---
+    # --- IGES用の深さマップ ---
     print(f"[IGES] 深さマップ生成 {params.STL_COLS}x{params.STL_ROWS} ...")
     iges_depth = image_to_depth_map(image_path, params, params.STL_ROWS, params.STL_COLS)
-    n_lines_iges = iges_writer.write_iges(
-        iges_depth, params.WORK_X, params.WORK_Y, params.WORK_Z, iges_path
+    n_patches, n_lines_iges = iges_writer.write_iges(
+        iges_depth, params.WORK_X, params.WORK_Y, params.WORK_Z, iges_path,
+        patch_pts=params.IGES_PATCH_PTS,
     )
-    print(f"[IGES] {iges_path} (B-spline曲面, {n_lines_iges} パラメータ行)")
+    print(f"[IGES] {iges_path} (B-spline曲面 {n_patches}パッチ, "
+          f"{n_lines_iges} パラメータ行)")
 
     # --- NC用の深さマップ（高解像度） ---
     nc_cols = max(2, int(round(params.WORK_X / params.SAMPLE_PITCH_X)) + 1)

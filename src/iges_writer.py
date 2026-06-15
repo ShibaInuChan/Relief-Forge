@@ -4,9 +4,14 @@
 制御点とする線形B-spline曲面（IGES Entity 128 / Rational B-Spline
 Surface, 多項式・非有理）として出力する。
 
+高精細化のため、曲面を格子状のタイル（パッチ）に分割して複数の
+Entity 128 として書き出せる。隣接パッチは境界の制御点列を共有する
+ため、隙間なく連続する（線形B-splineは格子点を厳密に通る）。1枚あたりの
+制御点数が小さくなることで、CADでの読み込みが大幅に速くなる。
+
 STLが三角形メッシュなのに対し、IGESはCADで扱える解析的な曲面として
 レリーフ面を表現できる。木目レリーフのCAM／形状確認用途では、彫り込み
-面（上面）1枚があれば十分なため、上面のみを1枚の曲面として書き出す。
+面（上面）があれば十分なため、上面のみを曲面として書き出す。
 
 追加ライブラリ不要（ASCII手書き）。numpy-stl等への依存はない。
 """
@@ -17,6 +22,10 @@ import numpy as np
 # IGES 1行は固定80桁。1-72桁がデータ、73桁がセクション識別子、
 # 74-80桁が各セクション内の連番。
 _LINE_DATA_WIDTH = 72
+
+# 1パッチあたりの片側方向の最大制御点数（既定）。これを超える格子は
+# タイル分割される。64×64 ≒ 約4千点/パッチでCADが軽快に開ける。
+DEFAULT_PATCH_PTS = 64
 
 
 def _section_line(content, section, seq):
@@ -29,169 +38,179 @@ def _hollerith(text):
     return "{}H{}".format(len(text), text)
 
 
-def _build_param_records(depth_map, work_x, work_y, work_z):
-    """Entity 128 のパラメータデータ（カンマ区切りトークン列）を作る。
+def _fmt_real(v):
+    """実数をIGES向けに整形する。"""
+    return "{:.6f}".format(float(v))
 
-    U方向 = X（列）、V方向 = Y（行）に対応させる。
-    制御点は格子点そのもの（線形B-splineなので格子点を厳密に通る）。
+
+def _chunk_ranges(n, max_pts):
+    """制御点数 n を、1パッチ最大 max_pts 点の区間に分割する。
+
+    隣接区間は端点を共有する（overlap=1）ため、パッチ同士の境界が
+    厳密に一致する。返り値は (start, end) の包含インデックスのリスト。
     """
-    rows, cols = depth_map.shape
+    max_pts = max(2, int(max_pts))
+    step = max_pts - 1  # 1パッチあたりのセル数
+    ranges = []
+    start = 0
+    while start < n - 1:
+        end = min(start + step, n - 1)
+        ranges.append((start, end))
+        start = end
+    if not ranges:  # n == 1 の保険
+        ranges.append((0, 0))
+    return ranges
 
-    xs = np.linspace(0.0, work_x, cols)
-    ys = np.linspace(0.0, work_y, rows)
-    # 上面のZ = 板上面(work_z) - 彫り込み深さ
-    top_z = work_z - depth_map
 
-    k1 = cols - 1  # U方向の制御点上限インデックス
-    k2 = rows - 1  # V方向の制御点上限インデックス
-    m1 = 1         # U方向の次数（線形）
-    m2 = 1         # V方向の次数（線形）
+def _clamped_linear_knots(n):
+    """制御点 n 個に対するクランプ線形ノットベクトル。
 
-    tokens = []
+    [0, 0,1,2,...,n-1, n-1]（両端を重複させ始点・終点を通す）。
+    """
+    return [0.0] + [float(i) for i in range(n)] + [float(n - 1)]
 
-    def add(v):
-        tokens.append(v)
 
-    add("128")          # エンティティ種別
-    add(str(k1))
-    add(str(k2))
-    add(str(m1))
-    add(str(m2))
-    add("0")            # PROP1: U方向で閉じない
-    add("0")            # PROP2: V方向で閉じない
-    add("1")            # PROP3: 多項式（非有理）
-    add("0")            # PROP4: U方向 非周期
-    add("0")            # PROP5: V方向 非周期
+def _build_patch_tokens(xs, ys, top_z, c0, c1, r0, r1):
+    """1パッチ分の Entity 128 パラメータデータ（トークン列）を作る。
 
-    # ノットベクトル（クランプ線形）。制御点 n 個に対し
-    # [0, 0,1,2,...,n-1, n-1] （両端を重複させて始点・終点を通す）。
-    def clamped_linear_knots(n):
-        return [0.0] + [float(i) for i in range(n)] + [float(n - 1)]
+    U方向 = X（列 c0..c1）、V方向 = Y（行 r0..r1）。
+    """
+    cols = c1 - c0 + 1
+    rows = r1 - r0 + 1
 
-    u_knots = clamped_linear_knots(cols)
-    v_knots = clamped_linear_knots(rows)
-    for s in u_knots:
-        add(_fmt_real(s))
-    for t in v_knots:
-        add(_fmt_real(t))
+    k1 = cols - 1
+    k2 = rows - 1
+    m1 = 1
+    m2 = 1
+
+    tokens = ["128", str(k1), str(k2), str(m1), str(m2),
+              "0", "0", "1", "0", "0"]
+
+    for s in _clamped_linear_knots(cols):
+        tokens.append(_fmt_real(s))
+    for t in _clamped_linear_knots(rows):
+        tokens.append(_fmt_real(t))
 
     # 重み（多項式なので全て1.0）。順序は U が内側ループ。
     for _j in range(rows):
         for _i in range(cols):
-            add(_fmt_real(1.0))
+            tokens.append(_fmt_real(1.0))
 
-    # 制御点 X,Y,Z。順序は U（列）が内側ループ、V（行）が外側ループ。
-    for j in range(rows):
-        for i in range(cols):
-            add(_fmt_real(xs[i]))
-            add(_fmt_real(ys[j]))
-            add(_fmt_real(top_z[j, i]))
+    # 制御点 X,Y,Z。U（列）が内側ループ、V（行）が外側ループ。
+    for j in range(r0, r1 + 1):
+        for i in range(c0, c1 + 1):
+            tokens.append(_fmt_real(xs[i]))
+            tokens.append(_fmt_real(ys[j]))
+            tokens.append(_fmt_real(top_z[j, i]))
 
     # パラメータ範囲 U0,U1,V0,V1。
-    add(_fmt_real(0.0))
-    add(_fmt_real(float(cols - 1)))
-    add(_fmt_real(0.0))
-    add(_fmt_real(float(rows - 1)))
+    tokens.append(_fmt_real(0.0))
+    tokens.append(_fmt_real(float(cols - 1)))
+    tokens.append(_fmt_real(0.0))
+    tokens.append(_fmt_real(float(rows - 1)))
 
     return tokens
 
 
-def _fmt_real(v):
-    """実数をIGES向けに整形する（不要な桁を抑えつつ精度を確保）。"""
-    return "{:.6f}".format(float(v))
-
-
 def _pack_param_lines(tokens, de_pointer):
-    """トークン列をパラメータデータ行（72桁以内）に詰める。
-
-    最後のトークンの後にレコード区切り ';' を付ける。各行は
-    カンマ区切りで、データ部 64桁以内、65-72桁にDEバックポインタ。
-    """
-    # 末尾にレコード区切りを付与したカンマ区切り文字列を作る。
+    """トークン列をパラメータデータ行（64桁以内 + DEバックポインタ）に詰める。"""
     body = ",".join(tokens) + ";"
-
-    # 64桁以内になるよう、カンマ境界で分割する。
     lines = []
     remaining = body
     while remaining:
         if len(remaining) <= 64:
             lines.append(remaining)
             break
-        # 64桁以内で最後のカンマ（または ';'）の位置を探す。
-        cut = 64
-        seg = remaining[:cut]
+        seg = remaining[:64]
         idx = max(seg.rfind(","), seg.rfind(";"))
         if idx == -1:
-            idx = cut - 1
+            idx = 63
         lines.append(remaining[:idx + 1])
         remaining = remaining[idx + 1:]
+    return ["{:<64}{:>8d}".format(ln, de_pointer) for ln in lines]
 
-    # 各行に DE バックポインタ（65-72桁）を付ける。
+
+def _wrap_global(body):
+    """グローバルセクション本文を72桁で折り返す。"""
     out = []
-    for ln in lines:
-        out.append("{:<64}{:>8d}".format(ln, de_pointer))
-    return out
-
-
-def write_iges(depth_map, work_x, work_y, work_z, path,
-               product_id="photo-relief-cam"):
-    """深さマップの上面をB-spline曲面としてIGESに出力する。
-
-    Returns:
-        書き出したパラメータデータ行数（曲面の規模の目安）。
-    """
-    from datetime import datetime
-
-    path = str(path)
-    rows, cols = depth_map.shape
-    max_coord = max(work_x, work_y, work_z)
-
-    # --- パラメータデータ（Entity 128） ---
-    tokens = _build_param_records(depth_map, work_x, work_y, work_z)
-    # DEポインタは 1（最初で唯一のエンティティ）。
-    param_lines = _pack_param_lines(tokens, de_pointer=1)
-
-    # --- 各セクション組み立て ---
-    start_lines = ["Photo relief surface (IGES Entity 128 B-Spline surface)."]
-
-    now = datetime.now().strftime("%Y%m%d.%H%M%S")
-    fname = path.split("/")[-1]
-    g = [
-        "1H,", "1H;",
-        _hollerith(product_id),
-        _hollerith(fname),
-        _hollerith("photo-relief-cam"),
-        _hollerith("1.0"),
-        "32", "38", "6", "308", "15",
-        _hollerith(product_id),
-        "1.0", "2", _hollerith("MM"), "1", "0.01",
-        _hollerith(now),
-        "1.0E-06", _fmt_real(max_coord),
-        _hollerith("author"), _hollerith("org"),
-        "11", "0",
-        _hollerith(now),
-    ]
-    global_body = ",".join(g) + ";"
-    # グローバルセクションも72桁で折り返す。
-    global_lines = []
-    remaining = global_body
+    remaining = body
     while remaining:
         if len(remaining) <= _LINE_DATA_WIDTH:
-            global_lines.append(remaining)
+            out.append(remaining)
             break
         seg = remaining[:_LINE_DATA_WIDTH]
         idx = max(seg.rfind(","), seg.rfind(";"))
         if idx == -1:
             idx = _LINE_DATA_WIDTH - 1
-        global_lines.append(remaining[:idx + 1])
+        out.append(remaining[:idx + 1])
         remaining = remaining[idx + 1:]
+    return out
 
-    # --- ディレクトリエントリ（Entity 128, 2行で20フィールド） ---
-    param_line_count = len(param_lines)
-    de_line1 = "{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}".format(
-        128, 1, 0, 0, 0, 0, 0, 0, 0)
-    de_line2 = "{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8s}{:>8d}".format(
-        128, 0, 0, param_line_count, 0, 0, 0, "", 0)
+
+def write_iges(depth_map, work_x, work_y, work_z, path,
+               product_id="photo-relief-cam", patch_pts=DEFAULT_PATCH_PTS):
+    """深さマップの上面をB-spline曲面（複数パッチ）としてIGESに出力する。
+
+    Args:
+        patch_pts: 1パッチあたりの片側方向の最大制御点数。グリッドが
+                   これを超える場合はタイル分割される。
+
+    Returns:
+        (パッチ数, 総パラメータデータ行数) のタプル。
+    """
+    from datetime import datetime
+
+    path = str(path)
+    rows, cols = depth_map.shape
+
+    xs = np.linspace(0.0, work_x, cols)
+    ys = np.linspace(0.0, work_y, rows)
+    top_z = work_z - depth_map
+    max_coord = max(work_x, work_y, work_z)
+
+    # --- パッチ分割 ---
+    col_ranges = _chunk_ranges(cols, patch_pts)
+    row_ranges = _chunk_ranges(rows, patch_pts)
+
+    # 各パッチの DE と P を組み立てる。
+    de_lines = []      # ディレクトリエントリ行
+    param_lines = []   # パラメータデータ行
+    n_patches = 0
+
+    for (r0, r1) in row_ranges:
+        for (c0, c1) in col_ranges:
+            n_patches += 1
+            de_seq = len(de_lines) + 1          # このDEの先頭行の連番（奇数）
+            p_start = len(param_lines) + 1      # このエンティティの先頭P連番
+
+            tokens = _build_patch_tokens(xs, ys, top_z, c0, c1, r0, r1)
+            plines = _pack_param_lines(tokens, de_pointer=de_seq)
+            param_lines.extend(plines)
+
+            de1 = ("{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}"
+                   .format(128, p_start, 0, 0, 0, 0, 0, 0, 0))
+            de2 = ("{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8d}{:>8s}{:>8d}"
+                   .format(128, 0, 0, len(plines), 0, 0, 0, "", 0))
+            de_lines.append(de1)
+            de_lines.append(de2)
+
+    # --- Start / Global ---
+    start_lines = ["Photo relief surface(s) (IGES Entity 128 B-Spline)."]
+
+    now = datetime.now().strftime("%Y%m%d.%H%M%S")
+    fname = path.split("/")[-1]
+    g = [
+        "1H,", "1H;",
+        _hollerith(product_id), _hollerith(fname),
+        _hollerith("photo-relief-cam"), _hollerith("1.0"),
+        "32", "38", "6", "308", "15",
+        _hollerith(product_id),
+        "1.0", "2", _hollerith("MM"), "1", "0.01",
+        _hollerith(now), "1.0E-06", _fmt_real(max_coord),
+        _hollerith("author"), _hollerith("org"),
+        "11", "0", _hollerith(now),
+    ]
+    global_lines = _wrap_global(",".join(g) + ";")
 
     # --- 出力 ---
     lines = []
@@ -199,19 +218,17 @@ def write_iges(depth_map, work_x, work_y, work_z, path,
         lines.append(_section_line(c, "S", i))
     for i, c in enumerate(global_lines, start=1):
         lines.append(_section_line(c, "G", i))
-    lines.append(_section_line(de_line1, "D", 1))
-    lines.append(_section_line(de_line2, "D", 2))
+    for i, c in enumerate(de_lines, start=1):
+        lines.append(_section_line(c, "D", i))
     for i, c in enumerate(param_lines, start=1):
-        # パラメータ行は既に65-72桁にポインタを含むので72桁固定。
         lines.append("{:<72}{}{:>7d}".format(c, "P", i))
 
-    # --- ターミネートセクション ---
     term = "{:>8s}{:>7d}{:>8s}{:>7d}{:>8s}{:>7d}{:>8s}{:>7d}".format(
         "S", len(start_lines), "G", len(global_lines),
-        "D", 2, "P", len(param_lines))
+        "D", len(de_lines), "P", len(param_lines))
     lines.append(_section_line(term, "T", 1))
 
     with open(path, "w", encoding="ascii") as f:
         f.write("\n".join(lines) + "\n")
 
-    return len(param_lines)
+    return n_patches, len(param_lines)
