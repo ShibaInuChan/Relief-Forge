@@ -148,7 +148,7 @@ def _wrap_global(body):
 
 
 def write_iges(depth_map, work_x, work_y, work_z, path,
-               product_id="photo-relief-cam", patch_pts=DEFAULT_PATCH_PTS):
+               product_id="relief-forge", patch_pts=DEFAULT_PATCH_PTS):
     """深さマップの上面をB-spline曲面（複数パッチ）としてIGESに出力する。
 
     Args:
@@ -202,7 +202,7 @@ def write_iges(depth_map, work_x, work_y, work_z, path,
     g = [
         "1H,", "1H;",
         _hollerith(product_id), _hollerith(fname),
-        _hollerith("photo-relief-cam"), _hollerith("1.0"),
+        _hollerith("relief-forge"), _hollerith("1.0"),
         "32", "38", "6", "308", "15",
         _hollerith(product_id),
         "1.0", "2", _hollerith("MM"), "1", "0.01",
