@@ -1,5 +1,7 @@
 output/
 *.stl
+*.igs
+*.iges
 *.nc
 *.gcode
 __pycache__/

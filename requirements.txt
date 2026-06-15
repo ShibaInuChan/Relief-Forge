@@ -1,4 +1,5 @@
 numpy==2.4.6
 pillow==12.2.0
-numpy-stl==3.2.0
 matplotlib==3.11.0
+# numpy-stl は IGES 出力では不要。旧 STL 出力（src/stl_writer.py）を
+# 使う場合のみ `pip install numpy-stl==3.2.0` を追加してください。
