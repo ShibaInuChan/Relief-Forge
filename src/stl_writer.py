@@ -1,8 +1,9 @@
-"""STL生成モジュール（レガシー）。
+"""STL生成モジュール。
 
-注記: 既定の出力は IGES（src/iges_writer.py）に置き換えられており、本モジュールは
-relief.py から呼び出されません。STLが必要な場合のみ利用してください
-（その際は `numpy-stl` のインストールが必要です）。
+注記: 画像→レリーフ（relief.py）の既定出力は IGES（src/iges_writer.py）に
+置き換えられており、relief.py からは呼び出されません。ただし「既存STLへの
+木目彫り込み」（shape_relief.py）は本モジュールの build_masked_solid を使う
+ため、`numpy-stl` が必要です。
 
 ----
 
@@ -108,6 +109,76 @@ def build_solid_mesh(depth_map, work_x, work_y, work_z):
     for i, tri in enumerate(triangles):
         data["vectors"][i] = np.array(tri)
 
+    return mesh.Mesh(data)
+
+
+def build_masked_solid(top_z, bot_z, mask, xs, ys):
+    """マスク内だけを持つ閉じたソリッドメッシュを構築する。
+
+    上面 top_z / 底面 bot_z を、mask=True の格子点の範囲にだけ作り、
+    内外境界には側壁を立てて閉じる。柄のような輪郭を持つ形状に使う。
+
+    Args:
+        top_z: (rows, cols) 上面Z[mm]。
+        bot_z: (rows, cols) 底面Z[mm]（板厚下端、通常0）。
+        mask: (rows, cols) bool。True=部品が存在する格子点。
+        xs: (cols,) X座標。
+        ys: (rows,) Y座標。
+
+    Returns:
+        mesh.Mesh
+    """
+    rows, cols = top_z.shape
+    grid_x, grid_y = np.meshgrid(xs, ys)
+
+    # セル（4隅すべてmask内）を「内部セル」とみなす。
+    inside_cell = (
+        mask[:-1, :-1] & mask[:-1, 1:] & mask[1:, :-1] & mask[1:, 1:]
+    )
+
+    tris = []
+
+    def top_v(r, c):
+        return (grid_x[r, c], grid_y[r, c], top_z[r, c])
+
+    def bot_v(r, c):
+        return (grid_x[r, c], grid_y[r, c], bot_z[r, c])
+
+    ir, ic = np.where(inside_cell)
+    for r, c in zip(ir.tolist(), ic.tolist()):
+        # 上面
+        tris.append((top_v(r, c), top_v(r + 1, c + 1), top_v(r, c + 1)))
+        tris.append((top_v(r, c), top_v(r + 1, c), top_v(r + 1, c + 1)))
+        # 底面（逆巻き）
+        tris.append((bot_v(r, c), bot_v(r, c + 1), bot_v(r + 1, c + 1)))
+        tris.append((bot_v(r, c), bot_v(r + 1, c + 1), bot_v(r + 1, c)))
+
+    def is_inside(r, c):
+        if r < 0 or c < 0 or r >= inside_cell.shape[0] or c >= inside_cell.shape[1]:
+            return False
+        return bool(inside_cell[r, c])
+
+    def add_wall(a, b):
+        # a,b は (r,c) の格子点。上→下で側壁を張る。
+        ta, tb = top_v(*a), top_v(*b)
+        ba, bb = bot_v(*a), bot_v(*b)
+        tris.append((ta, ba, bb))
+        tris.append((ta, bb, tb))
+
+    # 内外境界に側壁を立てる。
+    for r, c in zip(ir.tolist(), ic.tolist()):
+        if not is_inside(r, c - 1):   # 左
+            add_wall((r, c), (r + 1, c))
+        if not is_inside(r, c + 1):   # 右
+            add_wall((r + 1, c + 1), (r, c + 1))
+        if not is_inside(r - 1, c):   # 上
+            add_wall((r, c + 1), (r, c))
+        if not is_inside(r + 1, c):   # 下
+            add_wall((r + 1, c), (r + 1, c + 1))
+
+    data = np.zeros(len(tris), dtype=mesh.Mesh.dtype)
+    for i, t in enumerate(tris):
+        data["vectors"][i] = np.array(t)
     return mesh.Mesh(data)
 
 

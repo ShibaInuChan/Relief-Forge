@@ -1,10 +1,15 @@
-# photo-relief-cam
+# relief-forge
 
-写真（任意のグレースケール変換可能な画像）から、切削試作用の **IGES** と
-**NC（Gコード）**、および陰影プレビュー **PNG** を生成する汎用 CLI ツールです。
+画像（任意のグレースケール変換可能な写真・テクスチャ）を、CNC加工用の
+**レリーフ**へ鋳造（forge）する CLI ツール群です。2 つの使い方があります。
 
-IGES は彫り込み面（上面）を 1 枚の B-spline 曲面（IGES Entity 128）として
-書き出すため、CAD/CAM で解析的な曲面として読み込めます。
+1. **画像 → 平面レリーフ**（`relief.py`）: 画像を平らな板に彫り込み、**IGES**
+   （B-spline 曲面）・**NC（Gコード）**・陰影プレビュー **PNG** を生成。
+2. **画像 → 既存STLへ転写**（`shape_relief.py`）: 包丁の柄などの既存ソリッド
+   STL の上面に画像を彫り込み、彫り込み後の **STL**・**NC**・**PNG** を生成。
+
+IGES は彫り込み面（上面）を B-spline 曲面（IGES Entity 128）として書き出すため、
+CAD/CAM で解析的な曲面として読み込めます。
 
 ## 方式（グレースケール・ハイトマップ方式）
 
@@ -38,6 +43,28 @@ python src/relief.py samples/images/cherry.jpg --out output/
 パラメータは CLI 引数（例 `--max_depth 0.8`）または JSON 設定ファイル
 （`--config myconf.json`）で上書きできます。`--timestamp` で上書きを回避、
 `--no-fit-aspect` で WORK_Y の自動調整を無効化します。
+
+## 既存STLへの木目彫り込み（面ごと2.5D）
+
+平らな板ではなく、**既存のソリッドSTL（包丁の柄など）の上面**に木目を彫り込む
+こともできます。上から見て高さが一意に決まる面（2.5D）が対象です。
+
+```bash
+# テスト用の柄STLを生成（実STLが無い時の確認用）
+python src/make_test_handle.py
+
+# 対象STL + 木目画像 → 彫り込み
+python src/shape_relief.py samples/shapes/test_handle.stl samples/images/cherry.jpg --out output/
+```
+
+- STL: `output/{shape}_{image}_grain.stl`（彫り込み後の上面ソリッド、可視化用）
+- NC : `output/{shape}_{image}_grain.nc`（マスク付き表面仕上げラスター）
+- PNG: `output/{shape}_{image}_grain.png`（陰影プレビュー）
+
+処理は、対象STLから上面高さマップ `H(x,y)` とマスクを抽出し、木目深さ `d` を
+マスク内だけ差し引いて `Z = H − d` を彫る方式です。対象STLの置き方や注意点は
+`samples/shapes/README.md` を参照してください。全周への巻き付けは3軸では不可で、
+裏面など別の面は向きを変えてのマルチセットアップになります。
 
 ## パラメータ一覧
 

@@ -80,6 +80,71 @@ def compress_line(points, tolerance=0.0):
     return points
 
 
+def write_gcode_surface(top_z_map, mask, xs, ys, params, path):
+    """対象面の絶対Zマップ（彫り込み済み上面）をなぞるラスターNCを生成する。
+
+    マスク外では安全高さへ退避し、内側に入ったら切り込む。柄など輪郭を持つ
+    対象面の仕上げツールパス用。
+
+    Args:
+        top_z_map: (rows, cols) 加工する上面の絶対Z[mm]（既に木目深さを差し引き済み）。
+        mask: (rows, cols) bool。加工対象の範囲。
+        xs, ys: 格子座標[mm]。
+        params: パラメータ辞書。
+        path: 出力パス。
+
+    Returns:
+        書き出した行数。
+    """
+    safe_z = params["SAFE_Z"]
+    feed_cut = params["FEED_CUT"]
+    feed_plunge = params["FEED_PLUNGE"]
+    rpm = params["SPINDLE_RPM"]
+
+    rows, cols = top_z_map.shape
+
+    out = []
+    out.append("%")
+    out.append("O0002")
+    out.append("(PHOTO RELIEF ON TARGET SHAPE - SURFACE FINISH RASTER)")
+    out.append("(MACHINE-INDEPENDENT TEMPLATE - VERIFY BEFORE USE)")
+    out.append("(SINGLE FACE / 2.5D - MULTI-SETUP FOR OTHER FACES)")
+    out.append("G21 G90 G94")
+    out.append("G17 G54")
+    out.append(f"S{int(rpm)} M3")
+    out.append(f"G0 Z{safe_z:.3f}")
+
+    for r in range(rows):
+        col_order = range(cols) if r % 2 == 0 else range(cols - 1, -1, -1)
+        cutting = False
+        for c in col_order:
+            x, y, z = xs[c], ys[r], top_z_map[r, c]
+            if mask[r, c]:
+                if not cutting:
+                    out.append(f"G0 X{x:.3f} Y{y:.3f}")
+                    out.append(f"G0 Z{z + 1.0:.3f}")
+                    out.append(f"G1 Z{z:.3f} F{int(feed_plunge)}")
+                    cutting = True
+                else:
+                    out.append(f"G1 X{x:.3f} Y{y:.3f} Z{z:.3f} F{int(feed_cut)}")
+            else:
+                if cutting:
+                    out.append(f"G0 Z{safe_z:.3f}")
+                    cutting = False
+        if cutting:
+            out.append(f"G0 Z{safe_z:.3f}")
+
+    out.append(f"G0 Z{safe_z:.3f}")
+    out.append("M5")
+    out.append("M30")
+    out.append("%")
+
+    text = "\n".join(out) + "\n"
+    with open(path, "w") as f:
+        f.write(text)
+    return len(out)
+
+
 def write_gcode(depth_map, params, path):
     """深さマップからNC（Gコード）を生成して保存する。
 

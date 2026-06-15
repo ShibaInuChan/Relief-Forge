@@ -1,5 +1,6 @@
 numpy==2.4.6
 pillow==12.2.0
 matplotlib==3.11.0
-# numpy-stl は IGES 出力では不要。旧 STL 出力（src/stl_writer.py）を
-# 使う場合のみ `pip install numpy-stl==3.2.0` を追加してください。
+# 既存STLへの木目彫り込み（shape_relief.py）はSTLの読み書きに使用。
+# 画像→IGES（relief.py）だけなら numpy-stl は不要。
+numpy-stl==3.2.0
