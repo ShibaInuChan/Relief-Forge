@@ -6,3 +6,9 @@ output/
 *.gcode
 __pycache__/
 *.pyc
+
+# 彫り込み対象の入力STLは追跡を許可（生成物 output/ は上の除外が優先）
+!samples/shapes/*.stl
+
+# ただし make_test_handle.py から再生成できるテスト柄は追跡しない
+samples/shapes/test_handle.stl
