@@ -1,0 +1,6 @@
+output/
+*.stl
+*.nc
+*.gcode
+__pycache__/
+*.pyc
