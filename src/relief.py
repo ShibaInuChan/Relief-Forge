@@ -49,8 +49,10 @@ class Params:
     SAFE_Z: float = 5.0         # mm
 
     # 曲面解像度（制御点数）。名称は後方互換のため STL_ 接頭辞のまま。
-    STL_COLS: int = 300
-    STL_ROWS: int = 200
+    # 400列が品質と読み込み時間の最適点（実証済み）。300は物足りず、
+    # 500以上は差が小さく重くなる。
+    STL_COLS: int = 400
+    STL_ROWS: int = 267
     # IGES曲面の1パッチあたり片側方向の最大制御点数。グリッドが大きい
     # 場合はタイル分割され、CADでの読み込みが速くなる。
     IGES_PATCH_PTS: int = 64
