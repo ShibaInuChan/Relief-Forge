@@ -109,3 +109,8 @@ python src/shape_relief.py samples/shapes/test_handle.stl samples/images/cherry.
 生成される NC は**機械非依存の素体**です。実機の制御装置・工具・原点に合わせた
 調整と、シミュレーション・試し切りによる検証が**必須**です。
 **未検証データを本番加工に流さないでください。**
+
+## ライセンス
+
+[MIT License](LICENSE) で公開しています。商用利用・改変・再配布すべて自由です
+（クレジット表記のみ必要）。著作権は ShibaInuChan に帰属します。
