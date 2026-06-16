@@ -38,7 +38,7 @@ class Params:
     WORK_X: float = 150.0       # mm 板の長さ
     WORK_Y: float = 100.0       # mm 板の幅（画像アスペクトに合わせ調整可）
     WORK_Z: float = 20.0        # mm 板の厚み（STL用）
-    MAX_DEPTH: float = 0.5      # mm 最大切削深さ（暗部）
+    MAX_DEPTH: float = 0.1      # mm 最大切削深さ（暗部）
     MIN_DEPTH: float = 0.0      # mm 最小切削深さ（明部）
     BALL_DIA: float = 1.0       # mm ボールエンドミル径
     STEP_OVER: float = 0.3      # mm 走査線ピッチ
